@@ -77,21 +77,13 @@ module ActiveMerchant #:nodoc:
       end
       
       def capture(money, reference, options = {})
+        # check? ? 'CHECK' : 'CAPT'
         commit(money, build_capture_request('CAPT', reference.split(";").first))
       end
       
       def void(reference, options = {})
         transaction_id, approval, amount = reference.split(";")
         commit(amount.to_i, build_void_request(amount.to_i, transaction_id, approval))
-      end
-
-      def credit(money, transaction_id_or_card, options = {})
-        if transaction_id_or_card.is_a?(String)
-          deprecated CREDIT_DEPRECATION_MESSAGE
-          refund(money, transaction_id_or_card, options)
-        else
-          commit(money, build_credit_request('CREDIT', money, nil, transaction_id_or_card))
-        end
       end
 
       def refund(money, reference, options = {})
@@ -119,15 +111,22 @@ module ActiveMerchant #:nodoc:
         end
       end
       
-      def build_sale_request(money, credit_card, options)
-        build_xml_request('SALE') do |xml|
-          add_credit_card(xml, credit_card)
-          add_addresses(xml, options)
-          add_customer_data(xml, options)
-          add_invoice_data(xml, options)
-          xml.tag! 'TotalAmount', amount(money)
-          
-          xml.target!
+      def build_sale_request(money, card_or_check, options)
+        if card_or_check.is_a?(ActiveMerchant::Billing::Check)
+          build_xml_request('CHECK') do |xml|
+            add_payment_details(xml, card_or_check)
+            xml.tag! 'TotalAmount', amount(money)
+            xml.target!
+          end
+        else
+          build_xml_request('SALE') do |xml|
+            add_payment_details(xml, card_or_check)
+            add_addresses(xml, options)
+            add_customer_data(xml, options)
+            add_invoice_data(xml, options)
+            xml.tag! 'TotalAmount', amount(money)
+            xml.target!
+          end
         end
       end
       
@@ -138,7 +137,6 @@ module ActiveMerchant #:nodoc:
           add_customer_data(xml, options)
           add_invoice_data(xml, options)
           xml.tag! 'TotalAmount', amount(money)
-          
           xml.target!
         end
       end
@@ -148,10 +146,10 @@ module ActiveMerchant #:nodoc:
       end
       
       def build_void_request(money, transaction_id, approval)
+        # check? ? 'VOIDACH' : 'VOID'
         build_xml_request('VOID', transaction_id) do |xml|
           xml.tag! 'Approval', approval
           xml.tag! 'TotalAmount', amount(money)
-          
           xml.target!
         end        
       end
@@ -161,7 +159,6 @@ module ActiveMerchant #:nodoc:
         build_xml_request(transaction_type, transaction_id) do |xml|
           add_credit_card(xml, card) if card
           xml.tag! 'TotalAmount', amount(money)
-          
           xml.target!
         end
       end
@@ -217,6 +214,15 @@ module ActiveMerchant #:nodoc:
         [ response[:transaction_id], response[:approval], original_amount ].join(";")
       end
       
+      def add_payment_details(xml, payment)
+        case payment
+        when ActiveMerchant::Billing::Check
+          add_check(xml, payment)
+        when ActiveMerchant::Billing::CreditCard
+          add_credit_card(xml, payment)
+        end
+      end
+      
       def add_credit_card(xml, credit_card)
         xml.tag! 'CardNum', credit_card.number
         xml.tag! 'CardExpMonth', format_exp(credit_card.month)
@@ -228,6 +234,16 @@ module ActiveMerchant #:nodoc:
 
         unless credit_card.verification_value.nil? || (credit_card.verification_value.length == 0)
           xml.tag! 'CVV2', credit_card.verification_value
+        end
+      end
+      
+      def add_check(xml, check)
+        puts check.inspect
+        xml.tag! 'CardName', check.name
+        xml.tag! 'ACH', 'Type' => check.account_type, 'SEC' => 'WEB' do
+          xml.tag! 'AccountNumber', check.account_number
+          xml.tag! 'ABA', check.routing_number
+          xml.tag! 'CheckNumber', check.number
         end
       end
       
@@ -244,7 +260,6 @@ module ActiveMerchant #:nodoc:
         if shipping_address = options[:shipping_address]
           xml.tag! 'ShippingInfo' do
             xml.tag! 'ShippingName', shipping_address[:name]
-            
             xml.tag! 'ShippingAddr' do
               xml.tag! 'Address', [shipping_address[:address1], shipping_address[:address2]].compact.join(" ")
               xml.tag! 'City', shipping_address[:city]
@@ -273,4 +288,3 @@ module ActiveMerchant #:nodoc:
     end
   end
 end
-
