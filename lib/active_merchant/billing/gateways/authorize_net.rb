@@ -102,10 +102,11 @@ module ActiveMerchant #:nodoc:
       # * <tt>money</tt> -- The amount to be purchased as an Integer value in cents.
       # * <tt>creditcard</tt> -- The CreditCard details for the transaction.
       # * <tt>options</tt> -- A hash of optional parameters.
-      def purchase(money, creditcard, options = {})
+      def purchase(money, card_or_check, options = {})
         post = {}
         add_invoice(post, options)
-        add_creditcard(post, creditcard)
+        # add_creditcard(post, creditcard)
+        add_payment_details(post, card_or_check)
         add_address(post, options)
         add_customer_data(post, options)
         add_duplicate_window(post)
@@ -322,6 +323,7 @@ module ActiveMerchant #:nodoc:
         post[:encap_char]     = "$"
 
         request = post.merge(parameters).collect { |key, value| "x_#{key}=#{CGI.escape(value.to_s)}" }.join("&")
+        
         request
       end
 
@@ -336,6 +338,27 @@ module ActiveMerchant #:nodoc:
         post[:exp_date]   = expdate(creditcard)
         post[:first_name] = creditcard.first_name
         post[:last_name]  = creditcard.last_name
+      end
+
+      def add_check(post, check)
+        post[:method] = 'ECHECK'
+        post[:bank_aba_code] = check.routing_number
+        post[:bank_acct_num] = check.account_number
+        post[:bank_acct_type] = check.account_type
+        post[:bank_name] = check.bank_name
+        post[:bank_acct_name] = check.name
+        post[:echeck_type] = 'WEB'
+        post[:recurring_billing] = 'FALSE'
+        post[:bank_check_number] = check.number
+      end
+      
+      def add_payment_details(post, payment)
+        case payment
+        when ActiveMerchant::Billing::Check
+          add_check(post, payment)
+        when ActiveMerchant::Billing::CreditCard
+          add_creditcard(post, payment)
+        end
       end
 
       def add_customer_data(post, options)
