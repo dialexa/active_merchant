@@ -82,16 +82,27 @@ module ActiveMerchant #:nodoc:
       end
       
       def void(reference, options = {})
-        transaction_id, approval, amount = reference.split(";")
-        commit(amount.to_i, build_void_request(amount.to_i, transaction_id, approval))
+        if options[:check] && options[:amount]
+          commit(options[:amount].to_i, build_void_ach_request(options[:amount], options[:check]))
+        else
+          transaction_id, approval, amount = reference.split(";")
+          commit(amount.to_i, build_void_request(amount.to_i, transaction_id, approval))
+        end
       end
 
       def refund(money, reference, options = {})
-        transaction_id = reference.split(";").first
-        credit_card = options[:credit_card]
-        commit(money, build_credit_request('CREDIT', money, transaction_id, credit_card))
+        if options.key?(:check)
+          commit(money.to_i, build_reverse_ach_request(money.to_i, options[:check]))
+        else
+          transaction_id = reference.split(";").first
+          credit_card = options[:credit_card]
+          commit(money, build_credit_request('CREDIT', money, transaction_id, credit_card))
+        end
       end
-
+      
+      def tokenize(card)
+        commit(nil, build_tokenize_request(card))
+      end
       
       private
       
@@ -111,16 +122,39 @@ module ActiveMerchant #:nodoc:
         end
       end
       
+      def build_tokenize_request(card)
+        xml = build_xml_request('TOKENIZE') do |xml|
+          add_credit_card(xml, card)
+          xml.target!
+        end
+      end
+      
+      def build_void_ach_request(money, check)
+        xml = build_xml_request('VOIDACH') do |xml|
+          add_check(xml, check)
+          xml.tag! 'TotalAmount', amount(money)
+          xml.target!
+        end
+      end
+      
+      def build_reverse_ach_request(money, check)
+        xml = build_xml_request('REVERSAL') do |xml|
+          add_check(xml, check)
+          xml.tag! 'TotalAmount', amount(money)
+          xml.target!
+        end
+      end
+      
       def build_sale_request(money, card_or_check, options)
         if card_or_check.is_a?(ActiveMerchant::Billing::Check)
           build_xml_request('CHECK') do |xml|
-            add_payment_details(xml, card_or_check)
+            add_check(xml, card_or_check)
             xml.tag! 'TotalAmount', amount(money)
             xml.target!
           end
         else
           build_xml_request('SALE') do |xml|
-            add_payment_details(xml, card_or_check)
+            add_credit_card(xml, card_or_check)
             add_addresses(xml, options)
             add_customer_data(xml, options)
             add_invoice_data(xml, options)
@@ -146,12 +180,11 @@ module ActiveMerchant #:nodoc:
       end
       
       def build_void_request(money, transaction_id, approval)
-        # check? ? 'VOIDACH' : 'VOID'
         build_xml_request('VOID', transaction_id) do |xml|
           xml.tag! 'Approval', approval
           xml.tag! 'TotalAmount', amount(money)
           xml.target!
-        end        
+        end
       end
 
       # `transaction_id` may be nil for unlinked credit transactions.
@@ -214,15 +247,6 @@ module ActiveMerchant #:nodoc:
         [ response[:transaction_id], response[:approval], original_amount ].join(";")
       end
       
-      def add_payment_details(xml, payment)
-        case payment
-        when ActiveMerchant::Billing::Check
-          add_check(xml, payment)
-        when ActiveMerchant::Billing::CreditCard
-          add_credit_card(xml, payment)
-        end
-      end
-      
       def add_credit_card(xml, credit_card)
         xml.tag! 'CardNum', credit_card.number
         xml.tag! 'CardExpMonth', format_exp(credit_card.month)
@@ -238,9 +262,8 @@ module ActiveMerchant #:nodoc:
       end
       
       def add_check(xml, check)
-        puts check.inspect
         xml.tag! 'CardName', check.name
-        xml.tag! 'ACH', 'Type' => check.account_type, 'SEC' => 'WEB' do
+        xml.tag! 'ACH', 'Type' => check.account_type.upcase, 'SEC' => 'WEB' do
           xml.tag! 'AccountNumber', check.account_number
           xml.tag! 'ABA', check.routing_number
           xml.tag! 'CheckNumber', check.number
