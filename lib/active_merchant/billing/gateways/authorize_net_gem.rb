@@ -55,7 +55,7 @@ module ActiveMerchant #:nodoc:
       # * <tt>card</tt> -- The CreditCard details for the transaction.
       # * <tt>options</tt> -- A hash of optional parameters.
       def authorize(money, credit_card, options = {})
-        response = transaction.authorize(money, create_credit_card(credit_card), options)
+        response = transaction.authorize(convert_amount(money), create_credit_card(credit_card), options)
         convert_response(response)
       end
 
@@ -67,7 +67,7 @@ module ActiveMerchant #:nodoc:
       # * <tt>payment_info</tt> -- The CreditCard or Check details for the transaction.
       # * <tt>options</tt> -- A hash of optional parameters.
       def purchase(money, payment_details, options = {})
-        response = transaction.purchase(money, payment_info(payment_details), options)
+        response = transaction.purchase(convert_amount(money), payment_info(payment_details), options)
         convert_response(response)
       end
 
@@ -78,7 +78,7 @@ module ActiveMerchant #:nodoc:
       # * <tt>money</tt> -- The amount to be captured as an Integer value in cents.
       # * <tt>authorization</tt> -- The authorization returned from the previous authorize request.
       def capture(money, authorization, options = {})
-        response = transaction.prior_auth_capture(authorization, money)
+        response = transaction.prior_auth_capture(authorization, convert_amount(money))
         convert_response(response)
       end
 
@@ -110,7 +110,8 @@ module ActiveMerchant #:nodoc:
       # * <tt>:last_name</tt> -- The last name of the account being refunded.
       # * <tt>:zip</tt> -- The postal code of the account being refunded.
       def refund(money, authorization, options = {})
-        response = transaction.refund(money, authorization, options)
+        payment_details = payment_info(options.slice(:check, :credit_card).values.first)
+        response = transaction.refund(convert_amount(money), authorization, payment_details)
         convert_response(response)
       end
       
@@ -118,6 +119,10 @@ module ActiveMerchant #:nodoc:
       
       def transaction
         AuthorizeNet::AIM::Transaction.new(@options[:login], @options[:password], {:gateway => test? ? :test : :production})
+      end
+      
+      def convert_amount(money)
+        '%.2f' % (money / 100.0)
       end
       
       def payment_info(instance)
@@ -131,7 +136,8 @@ module ActiveMerchant #:nodoc:
       
       # converts an active_merchant CreditCard class to an authorize.net CreditCard class
       def create_credit_card(credit_card)
-        AuthorizeNet::CreditCard.new(credit_card.number, credit_card.month + credit_card.year, {
+        date = DateTime.parse("#{credit_card.month}/#{credit_card.year}")
+        AuthorizeNet::CreditCard.new(credit_card.number, date.strftime('%m%y'), {
           :card_code => credit_card.verification_value,
           :card_type => credit_card.type
         })
